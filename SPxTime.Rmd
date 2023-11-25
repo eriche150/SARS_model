@@ -1,0 +1,86 @@
+---
+title: "SPxTime"
+author: "ehe"
+date: "2023-09-20"
+output: html_document
+---
+#Load in necesary packages, notable rxode2, tidyverse. 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(pkgbuild) #checks if compiler is present. Compiler is mandatory for RxODE
+library(devtools)
+pkgbuild::has_build_tools(debug = TRUE) #checks if you have a working C compiler
+library(rxode2)
+```
+
+#Set up Simple Exp/decay ODE model with 1-cmpt first and assess how well it fits our data from PNAS 
+#TCLE model adopted from Goncalves  
+```{r exponential growth/decay model}
+#Try solving for change of V over time 
+ode_dSPdt <- "
+ a = log(Smax / S0) / tp;
+B = log(Smax / S0) / (tf - tp);
+        if (0 <= t && t <= tp) {
+            d/dt(S) = a * S;
+        } else {
+            d/dt(S) = -B * S;
+        }
+"
+```
+
+#Set Initial Estimates 
+```{r IE}
+theta.SPexpdecay = c(
+        Smax = (10^10)*30, # maximal number of virions * conversion factor to obtain maximum spike proteins availaible 
+        S0 = (10^3)*30,   # number of virions at time of infection
+        tf = 14,     # average duration of infection, range 10 - 15 days
+        tp = 3       # peak load seen 2 - 4 days post-inoculation
+)
+```
+
+#Set Initial Conditions: start from time = 0 to 14 
+```{r IC}
+initial_SP <- c(V = theta.SPexpdecay["S0"])
+```
+
+
+#Create and solve the model 
+```{r model}
+model.spikeprotein <- RxODE(model = ode_dSPdt, modName = "basicSPmodel")
+time_sp <- seq(0, theta.SPexpdecay["tf"], by = 0.001)
+SP_df <- rxSolve(model.spikeprotein, 
+                     params = theta.SPexpdecay,
+                     events = data.frame(time = time_sp),
+                     inits = c(S=(10^3)*30))
+```
+
+#Overview of dataset created, SP_df
+```{r header SP_df}
+SP_tibble<-as_tibble(SP_df)
+head(SP_tibble)
+str(SP_tibble)
+```
+
+#Plot Log[Spike Protein] over Time; should observe identical curvature with earlier models 
+```{r ggplot}
+sp_control<- ggplot(data=SP_tibble,
+                    aes(x=time,y=S))+
+        geom_line(linewidth=0.5)+
+        geom_point(size=0.5)+
+        scale_y_log10(breaks=c(30000, (10^10)*30))+
+        scale_x_continuous(breaks=c(1,2,3,4,5,6,7,8,9,10,11,12,13,14),limits=c(0,14))+
+        ggtitle("Change in Log[Spike Protein] over Time ")+
+        xlab("Time (days)")+
+        ylab("Log [Spike Protein]")+
+        theme_bw()
+sp_control
+```
+
+
+#Save the plot
+```{r save the plot with custom dimensions}
+ggsave("SPxTime.png",plot=sp_control,width=5,height=3,dpi=600)
+```
+
+
