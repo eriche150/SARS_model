@@ -1,0 +1,132 @@
+---
+title: "BebxVLxSimulateDrugExposureAttempt"
+author: "ehe"
+date: "2023-09-22"
+output: html_document
+---
+#Load in necesary packages, notable rxode2, tidyverse. 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(pkgbuild) #checks if compiler is present. Compiler is mandatory for RxODE
+library(devtools)
+pkgbuild::has_build_tools(debug = TRUE) #checks if you have a working C compiler
+library(rxode2)
+```
+
+#Set up Simple Exp/decay ODE model with 1-cmpt first and assess ratio of n_mAb:#n_virions
+#TCLE model adopted from Goncalves  
+```{r exponential growth/decay model with BEB}
+# Add the Effect term into your viral dynamics equation 
+ode_beb_dcdt <- "
+        a = log(Smax / S0) / tp;
+B = log(Smax / S0) / (tf - tp);
+        Effect = ((C_ss) / (IC50 + C_ss));
+        d/dt(C_ss) = -k*C_ss;
+        if (0 <= t && t < tp) {
+  d/dt(S) = a * S * (1 - Effect);
+} else {
+  d/dt(S) = -B * S;
+}
+"
+```
+
+
+#Provide theta for the parameters outlined in ODE 
+```{r theta for Bebtelovimab}
+theta.simplebebv1 =c(
+        Smax = (10^10)*30,
+        S0 = 10^3,
+        tf = 14,
+        tp = 3,
+        IC50 = 0.39, #nM
+        C_ss = 3.7361, #538 mg/L converted to 3.7361 nM
+        k = 0.06, #.693/11.5 days
+        Vt = 4.55 #Liters 
+)
+```
+
+
+#Create and solve the model 
+```{r model,message=FALSE}
+model.bebv1 <- RxODE(model = ode_beb_dcdt, modName = "BEBdcdt")
+time_bebv1 <- seq(0, theta.simplebebv1["tf"], by = 1)
+vlbebdfv1 <- rxSolve(model.bebv1, 
+                     params = theta.simplebebv1,
+                     events = data.frame(time = time_bebv1),
+                     inits = c(S=1e3*30,C_ss=3.7461))
+
+```
+
+
+#Overview of dataset constructed; this is the same as VLxTime
+```{r dataset}
+vlbebdf_tibblev1 <- as_tibble(vlbebdfv1)
+head(vlbebdf_tibblev1)
+str(vlbebdf_tibblev1)
+
+```
+
+#Convert concentration-time values to number of molecules in new df. Observe contents of df. 
+```{r}
+avogadro_number <- 6.02*10^23
+Vt <- 4.55
+vlbebdf_tibblev1.1 <- vlbebdf_tibblev1 %>% 
+        mutate(nmol = C_ss*Vt*avogadro_number)
+head(vlbebdf_tibblev1.1)
+```
+
+
+#[Beb] x time
+```{r graph}
+bebconc<-ggplot(data=vlbebdf_tibblev1,
+       aes(x=time, y=C_ss))+
+        geom_line(linewidth=0.75)+
+        xlab("Time (days)")+
+        ylab("Log [Bebtelovimab]")+
+        ggtitle("Concentration-time profile of BEB in 1-cmpt model")+
+         scale_x_continuous(breaks=seq(0,14,by=1),limits=c(0,14))+
+        scale_y_log10()+
+        theme_bw()
+bebconc
+```
+
+#nBeb x time
+```{r graph}
+bebnmol<-ggplot(data=vlbebdf_tibblev1.1,
+       aes(x=time, y=nmol))+
+        geom_line(linewidth=0.75)+
+        xlab("Time (days)")+
+        ylab("Number of BEB molecules")+
+        ggtitle("1-cmpt BEB exposure in patients")+
+         scale_x_continuous(breaks=seq(0,14,by=1),limits=c(0,14))+
+        scale_y_log10()+
+        theme_bw()
+bebnmol
+```
+
+#Plot both Spike Protein (affected by drug) and number of molecules for drug w 2 y-axes 
+```{r}
+#Implement scale factor b/c the values between both DV are vastly different 
+beb_sf<- max(vlbebdf_tibblev1.1$S)/max(vlbebdf_tibblev1.1$nmol)
+
+p_bebnmol_vl <- ggplot(data = vlbebdf_tibblev1.1,
+                       aes(x=time))+
+        geom_line(aes(y=S),color="black")+
+        geom_line(aes(y=nmol*beb_sf),color="skyblue",linewidth=1)+
+        scale_y_log10(sec.axis = sec_axis(~./beb_sf, name = "Number of BEB Molecules"))+
+        scale_x_continuous(breaks=c(0:14))+
+        ylab("Number of Spike Protein")+
+        xlab("Time (days)")+
+        ggtitle("nBEB molecules and COVID-19 Spike Protein over Time")+
+        theme_bw()
+p_bebnmol_vl
+        
+#suggests that BEB isn't removed after 14 days; PK study identified notable amounts after 270 days
+```
+
+#Save the plot into its respective directory 
+```{r}
+
+```
+
