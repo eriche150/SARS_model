@@ -1,0 +1,76 @@
+---
+title: "Beb_OneCmptModel"
+author: "ehe"
+date: "2023-12-02"
+output: github_document
+---
+
+#Load in necesary packages, notable rxode2, tidyverse. 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(pkgbuild) #checks if compiler is present. Compiler is mandatory for RxODE
+library(devtools)
+pkgbuild::has_build_tools(debug = TRUE) #checks if you have a working C compiler
+library(rxode2)
+```
+
+
+```{r Initial Estimates/Parameter values for 1-cmpt PK Model}
+theta.onecmptbeb=c(
+        A=175, #dose, expressed as A and in mg
+        V=3.82, #L
+        CL=0.29 #L/day
+)
+```
+
+```{r ODE for 1-cmpt PK Model for BEB}
+simpleodebeb<-"
+k = CL/V;
+d/dt(A) = -k*A; #solving for A, amount of drug, which is expressed in mg 
+C = A/V;
+"
+
+```
+
+```{r add once-only dosing schedule for BEB event table}
+bebdosing<- et(amountUnits="mg", timeUnits="day") %>% 
+        et(dose=175, time=0) %>% #specify 175mg dose given at time 0 
+        et(0:14) #specify timepoints for which to simulate data
+```
+
+
+```{r Create and solve the model}
+bebmodel<-RxODE(model=simpleodebeb)
+
+bebmodeloutput <- rxSolve(object = bebmodel,
+                  params=theta.onecmptbeb,
+                  events=bebdosing,
+                  inits=c(A=0))
+
+
+```
+```{r Plot [Beb] x Time}
+testgraph<-bebmodeloutput %>% 
+        ggplot(aes(x=time, y=C)) +
+        geom_line() +
+        labs(x="Time (days)", y="Concentration (mg/L)") +
+        scale_y_log10(limits=c(1,100),breaks=c(1,10,40,100))+
+        scale_x_continuous(breaks=seq(0,14,by=1))+
+        theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+              panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+        ggtitle("Simulated concentration-time profile of single-dose BEB")+
+        theme_bw()
+                
+testgraph
+```
+
+```{r add conversion constant to obtain number of BEB molecules over time}
+avogadro_number <- 6.02*10^23
+MolecularWeight <- 144000 #g/mol
+bebmodeloutput <- bebmodeloutput %>%
+    mutate(
+        MolarConcentration = C / MolecularWeight * 1000, # Convert mg/L to mol/L
+        NumberOfMolecules = MolarConcentration * avogadro_number
+    )
+```
